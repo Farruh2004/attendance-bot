@@ -34,6 +34,7 @@ BTN_SABBLI = "⚠️ Sababli bo'ldi"
 
 BTN_WEEK = "📅 Haftalik hisobot"
 BTN_MONTH = "🗓 Oylik hisobot"
+BTN_DAILY = "📆 Kunlik hisobot"
 BTN_ASK = "⌨️ Sanani yozib so'rash"
 
 WAITING_DATES = 1
@@ -285,7 +286,7 @@ def build_report(rows):
 def keyboard_for(uid):
     base = [[KeyboardButton(BTN_KELDIM), KeyboardButton(BTN_KETDIM), KeyboardButton(BTN_SABBLI)]]
     if uid in ADMINS:
-        base += [[KeyboardButton(BTN_WEEK), KeyboardButton(BTN_MONTH)], [KeyboardButton(BTN_ASK)]]
+        base += [[KeyboardButton(BTN_WEEK), KeyboardButton(BTN_MONTH), KeyboardButton(BTN_DAILY)], [KeyboardButton(BTN_ASK)]]
     return ReplyKeyboardMarkup(base, resize_keyboard=True)
 
 
@@ -302,6 +303,16 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == _normalize(BTN_ASK):
         await update.message.reply_text("Iltimos ikkita sanani kiriting (masalan):\n2025-09-01 2025-09-15\nFormat: YYYY-MM-DD YYYY-MM-DD")
         return WAITING_DATES
+    if text == _normalize(BTN_DAILY) or "KUNLIK" in text.upper():
+        today = date.today()
+        rows = rows_between(today, today)
+        if not rows:
+            await update.message.reply_text("Bugun uchun ma'lumot yo‘q.")
+            return ConversationHandler.END
+        bio = build_report(rows)
+        fname = f"attendance_{today.strftime(DATE_FORMAT)}.xlsx"
+        await update.message.reply_document(document=InputFile(bio, filename=fname))
+        return ConversationHandler.END
     if text == _normalize(BTN_WEEK) or "HAFTALIK" in text.upper():
         end = date.today()
         start = end - timedelta(days=6)
