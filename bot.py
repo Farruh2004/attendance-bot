@@ -7,6 +7,7 @@ import os
 import threading
 import unicodedata
 import logging
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment
@@ -34,12 +35,12 @@ BTN_SABBLI = "⚠️ Sababli bo'ldi"
 
 BTN_WEEK = "📅 Haftalik hisobot"
 BTN_MONTH = "🗓 Oylik hisobot"
-BTN_DAILY = "📆 Kunlik hisobot"
 BTN_ASK = "⌨️ Sanani yozib so'rash"
 
 WAITING_DATES = 1
 
 excel_lock = threading.Lock()
+TZ = ZoneInfo("Asia/Tashkent")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ def unmerge_overlapping(ws, row, c1, c2):
 
 
 def write_attendance(name, action):
-    now = datetime.now()
+    now = datetime.now(TZ)
     date_str = now.strftime(DATE_FORMAT)
     time_str = now.strftime(TIME_FORMAT)
     with excel_lock:
@@ -286,7 +287,7 @@ def build_report(rows):
 def keyboard_for(uid):
     base = [[KeyboardButton(BTN_KELDIM), KeyboardButton(BTN_KETDIM), KeyboardButton(BTN_SABBLI)]]
     if uid in ADMINS:
-        base += [[KeyboardButton(BTN_WEEK), KeyboardButton(BTN_MONTH), KeyboardButton(BTN_DAILY)], [KeyboardButton(BTN_ASK)]]
+        base += [[KeyboardButton(BTN_WEEK), KeyboardButton(BTN_MONTH)], [KeyboardButton(BTN_ASK)]]
     return ReplyKeyboardMarkup(base, resize_keyboard=True)
 
 
@@ -303,21 +304,11 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == _normalize(BTN_ASK):
         await update.message.reply_text("Iltimos ikkita sanani kiriting (masalan):\n2025-09-01 2025-09-15\nFormat: YYYY-MM-DD YYYY-MM-DD")
         return WAITING_DATES
-    if text == _normalize(BTN_DAILY) or "KUNLIK" in text.upper():
-        today = date.today()
-        rows = rows_between(today, today)
-        if not rows:
-            await update.message.reply_text("Bugun uchun ma'lumot yo‘q.")
-            return ConversationHandler.END
-        bio = build_report(rows)
-        fname = f"attendance_{today.strftime(DATE_FORMAT)}.xlsx"
-        await update.message.reply_document(document=InputFile(bio, filename=fname))
-        return ConversationHandler.END
     if text == _normalize(BTN_WEEK) or "HAFTALIK" in text.upper():
-        end = date.today()
+        end = datetime.now(TZ).date()
         start = end - timedelta(days=6)
     elif text == _normalize(BTN_MONTH) or "OYLIK" in text.upper():
-        end = date.today()
+        end = datetime.now(TZ).date()
         start = date(end.year, end.month, 1)
     else:
         return await handle_user(update, context)
@@ -385,13 +376,67 @@ async def handle_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif res == "already_sabbli":
         await update.message.reply_text("Bugun siz sababli deb belgilangan.")
     elif res == "ok_keldim":
-        await update.message.reply_text(f"✅ {name} — Keldim ({datetime.now().strftime(TIME_FORMAT)})")
+        now = datetime.now(TZ)
+        await update.message.reply_text(f"✅ {name} — Keldim ({now.strftime(TIME_FORMAT)})")
     elif res == "ok_ketdim":
-        await update.message.reply_text(f"🚪 {name} — Ketdim ({datetime.now().strftime(TIME_FORMAT)})")
+        now = datetime.now(TZ)
+        await update.message.reply_text(f"🚪 {name} — Ketdim ({now.strftime(TIME_FORMAT)})")
     elif res == "ok_sabbli":
         await update.message.reply_text("⚠️ SABABLI belgilandi.")
     else:
         await update.message.reply_text("Xato: yozishda muammo yuz berdi.")
+
+
+async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Siz admin emassiz")
+        return
+    today = datetime.now(TZ).date()
+    rows = rows_between(today, today)
+    if not rows:
+        await update.message.reply_text("Bugun uchun ma'lumot yo‘q.")
+        return
+    bio = build_report(rows)
+    fname = f"attendance_{today.strftime(DATE_FORMAT)}.xlsx"
+    await update.message.reply_document(document=InputFile(bio, filename=fname))
+
+
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Siz admin emassiz")
+        return
+    end = datetime.now(TZ).date()
+    start = end - timedelta(days=6)
+    rows = rows_between(start, end)
+    if not rows:
+        await update.message.reply_text("Ma'lumot topilmadi.")
+        return
+    bio = build_report(rows)
+    fname = f"attendance_{start.strftime(DATE_FORMAT)}_to_{end.strftime(DATE_FORMAT)}.xlsx"
+    await update.message.reply_document(document=InputFile(bio, filename=fname))
+
+
+async def cmd_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Siz admin emassiz")
+        return
+    today = datetime.now(TZ).date()
+    start = date(today.year, today.month, 1)
+    if today.month == 12:
+        next_month = date(today.year + 1, 1, 1)
+    else:
+        next_month = date(today.year, today.month + 1, 1)
+    end = next_month - timedelta(days=1)
+    rows = rows_between(start, end)
+    if not rows:
+        await update.message.reply_text("Ma'lumot topilmadi.")
+        return
+    bio = build_report(rows)
+    fname = f"attendance_{today.strftime('%Y_%m')}.xlsx"
+    await update.message.reply_document(document=InputFile(bio, filename=fname))
 
 
 def main():
@@ -399,6 +444,9 @@ def main():
         raise RuntimeError("BOT_TOKEN required")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("daily", cmd_daily))
+    app.add_handler(CommandHandler("week", cmd_week))
+    app.add_handler(CommandHandler("month", cmd_month))
     conv_filter = filters.User(user_id=list(ADMINS)) & filters.TEXT & ~filters.COMMAND
     conv = ConversationHandler(
         entry_points=[MessageHandler(conv_filter, admin_entry)],
@@ -408,7 +456,7 @@ def main():
     )
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user))
-    logger.info("Bot started (EXCEL only)")
+    logger.info("Bot started (EXCEL only, TZ=Asia/Tashkent)")
     app.run_polling(allowed_updates=None)
 
 
