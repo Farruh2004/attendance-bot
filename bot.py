@@ -35,6 +35,7 @@ BTN_SABBLI = "⚠️ Sababli bo'ldi"
 
 BTN_WEEK = "📅 Haftalik hisobot"
 BTN_MONTH = "🗓 Oylik hisobot"
+BTN_DAILY = "📆 Kunlik hisobot"
 BTN_ASK = "⌨️ Sanani yozib so'rash"
 
 WAITING_DATES = 1
