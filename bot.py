@@ -447,7 +447,7 @@ def main():
     app.add_handler(CommandHandler("daily", cmd_daily))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("month", cmd_month))
-    conv_filter = filters.User(user_id=list(ADMINS)) & filters.TEXT & ~filters.COMMAND
+    conv_filter = filters.User(user_id=list(ADMINS)) & filters.TEXT
     conv = ConversationHandler(
         entry_points=[MessageHandler(conv_filter, admin_entry)],
         states={WAITING_DATES: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_dates)]},
