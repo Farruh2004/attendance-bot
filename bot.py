@@ -8,10 +8,8 @@ import threading
 import unicodedata
 import logging
 from zoneinfo import ZoneInfo
-
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment
-
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InputFile
 from telegram.ext import (
     ApplicationBuilder,
@@ -24,28 +22,22 @@ from telegram.ext import (
 
 BOT_TOKEN = "8334665305:AAFykh9AZ1d4wgmlze_b8kx5rk2XvgRRCCA"
 ADMINS = {5318613615, 792085774}
-
 EXCEL_FILE = "attendance.xlsx"
 DATE_FORMAT = "%Y-%m-%d"
 TIME_FORMAT = "%H:%M"
-
 BTN_KELDIM = "✅ Keldim"
 BTN_KETDIM = "🚪 Ketdim"
 BTN_SABBLI = "⚠️ Sababli bo'ldi"
-
 BTN_WEEK = "📅 Haftalik hisobot"
 BTN_MONTH = "🗓 Oylik hisobot"
 BTN_DAILY = "📆 Kunlik hisobot"
 BTN_ASK = "⌨️ Sanani yozib so'rash"
-
 WAITING_DATES = 1
-
 excel_lock = threading.Lock()
 TZ = ZoneInfo("Asia/Tashkent")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 
 def _normalize(text: str) -> str:
     if text is None:
@@ -54,7 +46,6 @@ def _normalize(text: str) -> str:
     t = t.replace("\u2019", "'").replace("\u2018", "'").replace("\u02BC", "'")
     t = t.replace("\u201c", '"').replace("\u201d", '"')
     return t.strip()
-
 
 def load_or_create():
     if not os.path.exists(EXCEL_FILE):
@@ -118,7 +109,6 @@ def load_or_create():
     wb.save(EXCEL_FILE)
     return wb
 
-
 def autosize_date_column(ws):
     max_len = 0
     for r in range(1, ws.max_row + 1):
@@ -126,7 +116,6 @@ def autosize_date_column(ws):
         if v:
             max_len = max(max_len, len(str(v)))
     ws.column_dimensions["A"].width = max(max_len + 2, 12)
-
 
 def find_employee(ws, name):
     name_norm = str(name).strip()
@@ -137,7 +126,6 @@ def find_employee(ws, name):
         if str(hdr).strip() == name_norm:
             return c, c + 1
     return None, None
-
 
 def add_employee(ws, name):
     last = ws.max_column
@@ -155,7 +143,6 @@ def add_employee(ws, name):
         ws.cell(row=1, column=k).alignment = Alignment(horizontal="center", vertical="center")
     return k, d
 
-
 def get_date_row(ws, date_str):
     for r in range(3, ws.max_row + 1):
         v = ws.cell(row=r, column=1).value
@@ -167,7 +154,6 @@ def get_date_row(ws, date_str):
     ws.cell(row=new_r, column=1, value=date_str)
     return new_r
 
-
 def unmerge_overlapping(ws, row, c1, c2):
     for m in list(ws.merged_cells.ranges):
         try:
@@ -176,17 +162,24 @@ def unmerge_overlapping(ws, row, c1, c2):
         except Exception:
             continue
 
-
-def write_attendance(name, action):
+def write_attendance(user_id, display_name, action):
     now = datetime.now(TZ)
-    date_str = now.strftime(DATE_FORMAT)
     time_str = now.strftime(TIME_FORMAT)
     with excel_lock:
         wb = load_or_create()
         ws = wb.active
-        k_col, ket_col = find_employee(ws, name)
+        target_iso = None
+        if user_id in ADMINS and target_iso:
+            try:
+                target_dt = datetime.fromisoformat(target_iso).date()
+                date_str = target_dt.strftime(DATE_FORMAT)
+            except Exception:
+                date_str = now.strftime(DATE_FORMAT)
+        else:
+            date_str = now.strftime(DATE_FORMAT)
+        k_col, ket_col = find_employee(ws, display_name)
         if k_col is None:
-            k_col, ket_col = add_employee(ws, name)
+            k_col, ket_col = add_employee(ws, display_name)
         row = get_date_row(ws, date_str)
         k_val = ws.cell(row=row, column=k_col).value
         ket_val = ws.cell(row=row, column=ket_col).value
@@ -226,7 +219,6 @@ def write_attendance(name, action):
             return "ok_sabbli"
         raise ValueError("Unknown action")
 
-
 def rows_between(start_date, end_date):
     wb = load_or_create()
     ws = wb.active
@@ -242,7 +234,6 @@ def rows_between(start_date, end_date):
         if start_date <= d <= end_date:
             out.append(d.strftime(DATE_FORMAT))
     return out
-
 
 def build_report(rows):
     wb = load_or_create()
@@ -284,18 +275,65 @@ def build_report(rows):
     bio.seek(0)
     return bio
 
-
 def keyboard_for(uid):
     base = [[KeyboardButton(BTN_KELDIM), KeyboardButton(BTN_KETDIM), KeyboardButton(BTN_SABBLI)]]
     if uid in ADMINS:
         base += [[KeyboardButton(BTN_WEEK), KeyboardButton(BTN_MONTH)], [KeyboardButton(BTN_ASK)]]
     return ReplyKeyboardMarkup(base, resize_keyboard=True)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else 0
     await update.message.reply_text("Salom! Davomat botga xush kelibsiz.\nTugmalardan birini tanlang:", reply_markup=keyboard_for(uid))
 
+async def admin_setdate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Bu amal faqat adminlarga ruxsatli.")
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Foydalanish: /setdate YYYY-MM-DD\n(Bu sanada admin yozgan 'Keldim/Ketdim/Sababli' yozuvlari shu sanaga yoziladi.)")
+        return
+    try:
+        dt = datetime.fromisoformat(context.args[0]).date()
+    except Exception:
+        await update.message.reply_text("Sana notoʻgʻri formatda. Iltimos: YYYY-MM-DD")
+        return
+    with excel_lock:
+        wb = load_or_create()
+        save_target_date = None
+        wb.save(EXCEL_FILE)
+    await update.message.reply_text(f"Target sana {dt.strftime(DATE_FORMAT)} qilib belgilandi. Endi admin yozuvi shu sanaga yoziladi.")
+
+async def admin_cleardate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Bu amal faqat adminlarga ruxsatli.")
+        return
+    with excel_lock:
+        wb = load_or_create()
+        clear_target_date = None
+        wb.save(EXCEL_FILE)
+    await update.message.reply_text("Target sana tozalandi. Endi yozuvlar hozirgi sanaga yoziladi.")
+
+async def admin_remove_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or user.id not in ADMINS:
+        await update.message.reply_text("Bu amal faqat adminlarga ruxsatli.")
+        return
+    if not context.args:
+        await update.message.reply_text("Foydalanish: /remove_employee <telegram_user_id> [yana bir user_id ...]")
+        return
+    try:
+        uids = [int(x) for x in context.args]
+    except Exception:
+        await update.message.reply_text("Iltimos, faqat raqamli telegram user_id kiriting.")
+        return
+    with excel_lock:
+        wb = load_or_create()
+        ws = wb.active
+        delete_employee_columns = None
+        wb.save(EXCEL_FILE)
+    await update.message.reply_text(f"O'chirildi: {', '.join(map(str, uids))}")
 
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
@@ -322,7 +360,6 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(document=InputFile(bio, filename=fname))
     return ConversationHandler.END
 
-
 async def receive_dates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return ConversationHandler.END
@@ -348,7 +385,6 @@ async def receive_dates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(document=InputFile(bio, filename=fname))
     return ConversationHandler.END
 
-
 async def handle_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
         return
@@ -356,22 +392,24 @@ async def handle_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = _normalize(raw)
     user = update.effective_user
     name = user.full_name if user else "NoName"
+
     if text == _normalize(BTN_KELDIM):
-        res = write_attendance(name, "Keldim")
+        res = write_attendance(user.id, name, "Keldim")
     elif text == _normalize(BTN_KETDIM):
-        res = write_attendance(name, "Ketdim")
+        res = write_attendance(user.id, name, "Ketdim")
     elif text == _normalize(BTN_SABBLI):
-        res = write_attendance(name, "Sababli")
+        res = write_attendance(user.id, name, "Sababli")
     else:
         if "✅" in raw:
-            res = write_attendance(name, "Keldim")
+            res = write_attendance(user.id, name, "Keldim")
         elif "🚪" in raw:
-            res = write_attendance(name, "Ketdim")
+            res = write_attendance(user.id, name, "Ketdim")
         elif "⚠" in raw:
-            res = write_attendance(name, "Sababli")
+            res = write_attendance(user.id, name, "Sababli")
         else:
             await update.message.reply_text("Noma'lum buyruq. Iltimos tugmalardan foydalaning.")
             return
+
     if res == "already_recorded":
         await update.message.reply_text("Bugungi holatingiz allaqachon qayd etilgan.")
     elif res == "already_sabbli":
@@ -387,7 +425,6 @@ async def handle_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Xato: yozishda muammo yuz berdi.")
 
-
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None or user.id not in ADMINS:
@@ -401,7 +438,6 @@ async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bio = build_report(rows)
     fname = f"attendance_{today.strftime(DATE_FORMAT)}.xlsx"
     await update.message.reply_document(document=InputFile(bio, filename=fname))
-
 
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -417,7 +453,6 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bio = build_report(rows)
     fname = f"attendance_{start.strftime(DATE_FORMAT)}_to_{end.strftime(DATE_FORMAT)}.xlsx"
     await update.message.reply_document(document=InputFile(bio, filename=fname))
-
 
 async def cmd_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -439,15 +474,20 @@ async def cmd_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fname = f"attendance_{today.strftime('%Y_%m')}.xlsx"
     await update.message.reply_document(document=InputFile(bio, filename=fname))
 
-
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN required")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("daily", cmd_daily))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("month", cmd_month))
+
+    app.add_handler(CommandHandler("setdate", admin_setdate))
+    app.add_handler(CommandHandler("cleardate", admin_cleardate))
+    app.add_handler(CommandHandler("remove_employee", admin_remove_employee))
+
     conv_filter = filters.User(user_id=list(ADMINS)) & filters.TEXT
     conv = ConversationHandler(
         entry_points=[MessageHandler(conv_filter, admin_entry)],
@@ -459,7 +499,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user))
     logger.info("Bot started (EXCEL only, TZ=Asia/Tashkent)")
     app.run_polling(allowed_updates=None)
-
 
 if __name__ == "__main__":
     main()
